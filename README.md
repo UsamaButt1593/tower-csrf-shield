@@ -157,19 +157,32 @@ pre-check runs — and rejects — _before_ the session store is ever consulted.
 
 ## Verified toolchain and dependency versions
 
-This crate was built and its full test suite run against **rustc/cargo
-1.75.0**, with the dependency versions pinned in `Cargo.toml` (all ordinary
-minimum-version requirements — Cargo will use a newer compatible
-patch/minor release automatically — except `time`, pinned exactly for the
-reason noted inline in `Cargo.toml`). `hmac`, `sha2`, `rand`, and `base64`
-are pinned to specific _major_ lines because their next major releases
-change APIs this crate calls directly, not merely as a toolchain
-workaround, so bumping those deliberately (and adjusting `src/crypto.rs`
-accordingly) is a real decision, not just a version-number edit.
+This crate's full test suite has been run clean against two toolchains:
+**rustc/cargo 1.75.0** (the original baseline, with older dependency
+versions — `tower 0.4`, `tower-sessions 0.10`, `http 1.1.0`, etc.) and
+**rustc/cargo 1.99.0** (current, with the versions pinned in `Cargo.toml`
+now). All constraints are ordinary minimum-version requirements — Cargo
+will use a newer compatible patch/minor release automatically. `hmac`,
+`sha2`, `rand`, and `base64` stay pinned to specific _major_ lines
+regardless of toolchain, because their next major releases change APIs
+this crate calls directly, not merely as a toolchain workaround — bumping
+those is a real decision (and a `src/crypto.rs` change), not just a
+version-number edit.
 
-If your toolchain is newer than 1.75, everything here should build as-is;
-newer patch/minor releases of `tower`, `tower-sessions`, `http`,
-`http-body(-util)`, `cookie`, `async-trait`, and `tracing` are expected to
-keep working, since nothing in this crate depends on very recent additions
-to any of them — but they haven't been individually re-verified by me
-beyond what `Cargo.toml`'s ranges already pin.
+**If you're integrating this crate into an app that also depends on
+`tower-sessions` through something else** (an auth crate, a session-store
+crate), the single most important thing to check is that it resolves to
+**exactly one version** everywhere:
+
+```sh
+cargo tree -d | grep tower-sessions
+```
+
+This must print nothing. Two different versions linked into the same
+binary compile without warning but produce two distinct
+`tower_sessions::Session` types under the same name — whichever layer
+inserts a session (e.g. an auth middleware) writes one version's type,
+and this crate's `extensions.get::<Session>()` looks for the other,
+finds nothing, and returns `500` on every request even though a session
+genuinely exists and everything else using it works fine. Re-run that
+`cargo tree` check after any dependency bump, not just once at setup.

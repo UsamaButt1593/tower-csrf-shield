@@ -1,39 +1,69 @@
 [package]
 name = "tower-csrf-shield"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A Tower layer implementing CSRF protection (synchronizer, double-submit, and hybrid patterns) with compile-time-checked configuration."
 license = "MIT OR Apache-2.0"
 
 # Version notes (see README.md "Verified toolchain and dependency versions"
-# for the full explanation): this crate was built and tested against the
-# versions below on rustc 1.75. All constraints are ordinary minimum-version
-# requirements (Cargo will happily use a newer compatible patch/minor
-# release) except `time`, which is pinned exactly. `time` is a *transitive*
-# dependency only (pulled in via `cookie`/`tower-sessions`; this crate never
-# uses it directly) — the pin exists solely because newer `time` patch
-# releases require a Rust edition this crate's own MSRV target predates. If
-# your toolchain is newer, you can likely delete that one line.
+# for the full explanation): this crate was originally built and tested
+# against rustc/cargo 1.75.0, then re-verified on 1.99.0 with the versions
+# below. All constraints are ordinary minimum-version requirements (Cargo
+# will use a newer compatible patch/minor release automatically). `hmac`,
+# `sha2`, `rand`, and `base64` are pinned to specific *major* lines because
+# their next major releases change APIs this crate calls directly.
+#
+# CRITICAL — read before touching `tower-sessions` specifically: it must
+# resolve to exactly ONE version across this crate and anything else in the
+# final binary that touches sessions (axum-login, tower-sessions-sqlx-store,
+# etc). Two different versions compile cleanly but silently break CSRF
+# protection at runtime — see the comment on the `tower-sessions` line below
+# and on `CsrfError::MissingSessionExtension` in `src/error.rs`. After any
+# dependency change, run `cargo tree -d | grep tower-sessions`; it must
+# print nothing.
 [dependencies]
-tower = "0.4.13"
-tower-service = "0.3.2"
-tower-sessions = { version = "0.10.2", default-features = false }
-http = "1.1.0"
-http-body = "1.0.0"
-http-body-util = "0.1.1"
-bytes = "1"
-cookie = { version = "0.18.0", features = ["percent-encode"] }
-time = "=0.3.36" # transitive only — see note above
+tower = "0.5.3"
+tower-service = "0.3.3"
+# CRITICAL: tower-sessions must resolve to exactly ONE version across this
+# crate, the server crate, and anything else that touches sessions
+# (axum-login, tower-sessions-sqlx-store, etc).
+#
+# tower_sessions::Session is a concrete type scoped to whichever version of
+# tower-sessions compiled it. If two crates in the dependency graph require
+# semver-incompatible tower-sessions versions, Cargo links BOTH into the
+# binary — this compiles cleanly, with no warning. Whichever layer inserts
+# a Session into request extensions (e.g. axum-login's AuthManagerLayer)
+# writes its version's type; this crate's extensions.get::<Session>() looks
+# for ITS linked version's type. If they differ, the lookup silently finds
+# nothing, even though a session genuinely exists and auth is using it fine
+# — this crate just can't see it, and every request gets a 500
+# (CsrfError::MissingSessionExtension) instead of CSRF protection.
+#
+# This can be reintroduced by a single `cargo update`, or by adding/bumping
+# ANY dependency that pulls its own tower-sessions requirement. After
+# touching dependencies, always run:
+#
+#   cargo tree -d | grep tower-sessions
+#
+# ("-d" lists every crate resolved at more than one version.) It must print
+# nothing. Consider wiring this into CI as a build-failing check.
+tower-sessions = { version = "0.14.0", default-features = false }
+http = "1.5.0"
+http-body = "1.1.0"
+http-body-util = "0.1.5"
+bytes = "1.12.1"
+cookie = { version = "0.18.2", features = ["percent-encode"] }
+time = "0.3.36"
 hmac = "0.12.1"  # 0.13 (digest 0.11) changes trait signatures this crate relies on
-sha2 = "0.10.8"  # kept in lockstep with the hmac 0.12 line
-rand = "0.8.5"   # 0.9/0.10 changed the Rng/thread_rng API this crate calls
-base64 = "0.21.7"
+sha2 = "0.10.9"
+rand = "0.8.8"   # 0.9/0.10 changed the Rng/thread_rng API this crate calls
+base64 = "0.22.1"
 subtle = "2.6.1"
-form_urlencoded = "1.2.1"
+form_urlencoded = "1.2.2"
 async-trait = "0.1.77"
 tracing = "0.1.40"
 
 [dev-dependencies]
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "time"] }
-tower-sessions-memory-store = "0.10.2"
-tower = { version = "0.4.13", features = ["util"] }
+tower-sessions-memory-store = "0.14.0"
+tower = { version = "0.5.3", features = ["util"] }

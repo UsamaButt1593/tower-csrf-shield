@@ -30,6 +30,14 @@ pub enum CsrfError {
     /// `tower_sessions::Session` to be present in the request extensions
     /// (i.e. `tower_sessions::SessionManagerLayer` must run *before* this
     /// layer), but none was found.
+    ///
+    /// The most common real-world cause isn't a missing `SessionManagerLayer`
+    /// at all — it's two different versions of `tower-sessions` linked into
+    /// the same binary (e.g. via `axum-login` or a session-store crate
+    /// requiring a different version than this crate does), producing two
+    /// distinct `Session` types under the same name. See the `tower-sessions`
+    /// dependency comment in `Cargo.toml` before assuming your layer order is
+    /// wrong.
     MissingSessionExtension,
     /// The session has no token stored at the configured key, or the token
     /// it holds does not match the request's submitted token.
