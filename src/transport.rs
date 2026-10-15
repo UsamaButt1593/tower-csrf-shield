@@ -4,21 +4,21 @@
 //!
 //! Reading a header costs nothing extra. Reading a form field requires
 //! buffering the *entire* request body into memory (form fields aren't
-//! necessarily at a fixed offset), so this module normalizes every request's
-//! body into one concrete type — [`MaybeBufferedBody`] — that is either the
-//! original, untouched, streaming body (safe methods; header transport) or a
-//! fully-buffered one with the original bytes preserved for downstream
-//! consumption (form-field transport on an unsafe-method request). Only
-//! `application/x-www-form-urlencoded` bodies are supported for form-field
-//! transport; multipart bodies are out of scope (see the crate-level docs).
-
-use std::pin::Pin;
-use std::task::{Context, Poll};
+//! necessarily at a fixed offset) and then handing an equivalent body back
+//! downstream. That reconstructed body is the *same type* the request
+//! arrived with (`ReqBody::from(bytes)` — see the `From<Bytes>` bound on
+//! [`crate::CsrfService`]), not a wrapper type: a Tower layer whose inner
+//! service has to accept a different request type than the layer itself
+//! does isn't composable with frameworks like axum, whose `Router::layer`
+//! requires the layered service to keep accepting exactly
+//! `Request<axum::body::Body>`. Only `application/x-www-form-urlencoded`
+//! bodies are supported for form-field transport; multipart bodies are out
+//! of scope (see the crate-level docs).
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName};
-use http_body::{Body, Frame, SizeHint};
-use http_body_util::{BodyExt, Full};
+use http_body::Body;
+use http_body_util::BodyExt;
 
 use crate::error::CsrfError;
 
@@ -33,53 +33,6 @@ pub enum TokenTransport {
     Form(String),
     /// An HTTP request header.
     Header(HeaderName),
-}
-
-/// A body that is either the original, unread body, or one that has already
-/// been fully buffered into memory. Implements [`http_body::Body`] by
-/// delegating to whichever variant is active, so an inner `tower::Service`
-/// only ever needs to accept this one concrete type regardless of which
-/// branch a given request took.
-pub enum MaybeBufferedBody<B> {
-    Original(B),
-    Buffered(Full<Bytes>),
-}
-
-impl<B> Body for MaybeBufferedBody<B>
-where
-    B: Body<Data = Bytes> + Unpin,
-    B::Error: Into<BoxError>,
-{
-    type Data = Bytes;
-    type Error = BoxError;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match self.get_mut() {
-            Self::Original(b) => Pin::new(b)
-                .poll_frame(cx)
-                .map(|opt| opt.map(|res| res.map_err(Into::into))),
-            Self::Buffered(b) => Pin::new(b)
-                .poll_frame(cx)
-                .map(|opt| opt.map(|res| res.map_err(Into::into))),
-        }
-    }
-
-    fn is_end_stream(&self) -> bool {
-        match self {
-            Self::Original(b) => b.is_end_stream(),
-            Self::Buffered(b) => b.is_end_stream(),
-        }
-    }
-
-    fn size_hint(&self) -> SizeHint {
-        match self {
-            Self::Original(b) => b.size_hint(),
-            Self::Buffered(b) => b.size_hint(),
-        }
-    }
 }
 
 /// Buffers `body` fully, parses it as `application/x-www-form-urlencoded`,
@@ -131,6 +84,7 @@ pub(crate) fn is_form_urlencoded(headers: &HeaderMap) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::Full;
 
     #[test]
     fn detects_form_content_type_with_charset_param() {

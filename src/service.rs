@@ -5,7 +5,8 @@
 //! 1. **Origin check** (unsafe methods only, and only if enabled).
 //! 2. **Read what the pattern needs** off the request: the cookie (if the
 //!    pattern uses one) and — for unsafe methods — the submitted token,
-//!    from a header (free) or a form field (which buffers the body).
+//!    from a header (free) or a form field (which buffers the body and
+//!    rebuilds it — see the `ReqBody: From<Bytes>` bound below).
 //! 3. **Verify** (unsafe methods only), via the pattern's own logic.
 //!    Failure short-circuits with `403`; a misconfigured deployment
 //!    (missing session middleware, failing store) short-circuits with `500`
@@ -16,6 +17,17 @@
 //! 5. Call the inner service, then attach any `Set-Cookie` the pattern
 //!    needs to the response (appended, never replacing, so a session
 //!    layer's own `Set-Cookie` survives).
+//!
+//! **This service always hands its inner service the same `Request<ReqBody>`
+//! type it was itself called with — never a wrapper type.** When a form
+//! field needs to be read out of the body, the body is buffered and then
+//! rebuilt via `ReqBody::from(bytes)`, producing another `ReqBody`, not some
+//! other type. This is what makes the layer composable with frameworks like
+//! axum: `Router::layer` requires the layered service to keep accepting
+//! exactly `Request<axum::body::Body>`, and `axum::body::Body: From<Bytes>`
+//! holds, so this requirement is satisfied for free. An earlier version of
+//! this crate used a wrapper body type here and could not be layered onto
+//! an axum `Router` at all.
 //!
 //! Nothing here is generic over the pattern's *logic*: that all lives behind
 //! [`CsrfPatternDispatch`]. This file only orchestrates.
@@ -29,7 +41,6 @@ use http::header::SET_COOKIE;
 use http::request::Parts;
 use http::{Method, Request, Response, StatusCode};
 use http_body::Body;
-use http_body_util::Full;
 use tower_service::Service;
 
 use crate::cookie_config::find_cookie;
@@ -37,7 +48,7 @@ use crate::csrf_token::CsrfToken;
 use crate::error::CsrfError;
 use crate::layer::CsrfLayer;
 use crate::patterns::{CsrfPattern, CsrfPatternDispatch, ExtractedTokens};
-use crate::transport::{self, MaybeBufferedBody};
+use crate::transport;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -60,13 +71,10 @@ impl<P: CsrfPattern, S: Clone> Clone for CsrfService<P, S> {
 impl<P, S, ReqBody, ResBody> Service<Request<ReqBody>> for CsrfService<P, S>
 where
     P: CsrfPatternDispatch,
-    S: Service<Request<MaybeBufferedBody<ReqBody>>, Response = Response<ResBody>>
-        + Clone
-        + Send
-        + 'static,
+    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     S::Error: Send + 'static,
-    ReqBody: Body<Data = Bytes> + Send + Unpin + 'static,
+    ReqBody: Body<Data = Bytes> + From<Bytes> + Send + Unpin + 'static,
     ReqBody::Error: Into<BoxError>,
     ResBody: Default + Send + 'static,
 {
@@ -96,8 +104,8 @@ async fn handle<P, S, ReqBody, ResBody>(
 ) -> Result<Response<ResBody>, S::Error>
 where
     P: CsrfPatternDispatch,
-    S: Service<Request<MaybeBufferedBody<ReqBody>>, Response = Response<ResBody>>,
-    ReqBody: Body<Data = Bytes> + Send + Unpin + 'static,
+    S: Service<Request<ReqBody>, Response = Response<ResBody>>,
+    ReqBody: Body<Data = Bytes> + From<Bytes> + Send + Unpin + 'static,
     ReqBody::Error: Into<BoxError>,
     ResBody: Default,
 {
@@ -121,9 +129,10 @@ where
         .and_then(|name| find_cookie(&parts.headers, name));
 
     // 3. Unsafe methods: extract the submitted token and verify it. Safe
-    //    methods skip verification and never touch the body.
+    //    methods skip verification and never touch the body — it passes
+    //    through completely untouched, same type, same instance.
     let new_body = if is_safe {
-        MaybeBufferedBody::Original(body)
+        body
     } else {
         let (submitted, new_body) = if let Some(header_name) = required.header.as_ref() {
             let value = parts
@@ -131,15 +140,17 @@ where
                 .get(header_name)
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
-            (value, MaybeBufferedBody::Original(body))
+            (value, body)
         } else if let Some(field) = required.body_field.as_deref() {
             let is_form = transport::is_form_urlencoded(&parts.headers);
             match transport::buffer_and_read_form_field(body, field, is_form).await {
-                Ok((value, bytes)) => (value, MaybeBufferedBody::Buffered(Full::new(bytes))),
+                // Rebuilt as the *same* ReqBody type, not a wrapper — see
+                // the module docs.
+                Ok((value, bytes)) => (value, ReqBody::from(bytes)),
                 Err(e) => return Ok(rejection(&e, &parts)),
             }
         } else {
-            (None, MaybeBufferedBody::Original(body))
+            (None, body)
         };
 
         let extracted = ExtractedTokens {

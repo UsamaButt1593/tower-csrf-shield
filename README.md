@@ -157,17 +157,18 @@ pre-check runs — and rejects — _before_ the session store is ever consulted.
 
 ## Verified toolchain and dependency versions
 
-This crate's full test suite has been run clean against two toolchains:
-**rustc/cargo 1.75.0** (the original baseline, with older dependency
-versions — `tower 0.4`, `tower-sessions 0.10`, `http 1.1.0`, etc.) and
-**rustc/cargo 1.99.0** (current, with the versions pinned in `Cargo.toml`
-now). All constraints are ordinary minimum-version requirements — Cargo
-will use a newer compatible patch/minor release automatically. `hmac`,
-`sha2`, `rand`, and `base64` stay pinned to specific _major_ lines
-regardless of toolchain, because their next major releases change APIs
-this crate calls directly, not merely as a toolchain workaround — bumping
-those is a real decision (and a `src/crypto.rs` change), not just a
-version-number edit.
+This crate's full test suite was originally run clean against **rustc/cargo
+1.75.0** (with older dependency versions — `tower 0.4`, `tower-sessions
+0.10`, etc.). The versions now in `Cargo.toml` (`tower 0.5`,
+`tower-sessions 0.14`, ...) were confirmed to compile on **rustc/cargo
+1.99.0** by the crate's consumer; the 0.1.1 body-type fix below was
+test-verified on the 1.75 baseline only. All constraints are ordinary
+minimum-version requirements — Cargo will use a newer compatible
+patch/minor release automatically. `hmac`, `sha2`, `rand`, and `base64`
+stay pinned to specific *major* lines regardless of toolchain, because their
+next major releases change APIs this crate calls directly — bumping those is
+a real decision (and a `src/crypto.rs` change), not just a version-number
+edit.
 
 **If you're integrating this crate into an app that also depends on
 `tower-sessions` through something else** (an auth crate, a session-store

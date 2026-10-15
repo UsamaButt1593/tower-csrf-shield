@@ -15,8 +15,7 @@ use http::{Method, Request, Response};
 use http_body_util::{BodyExt, Full};
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tower_csrf_shield::{
-    CookieConfig, CookieSameSite, CsrfLayerBuilder, CsrfToken, HmacConfig, MaybeBufferedBody,
-    RegenerateToken,
+    CookieConfig, CookieSameSite, CsrfLayerBuilder, CsrfToken, HmacConfig, RegenerateToken,
 };
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_memory_store::MemoryStore;
@@ -25,7 +24,7 @@ type Body = Full<Bytes>;
 
 /// The application: reads whatever token the layer exposed and echoes it,
 /// standing in for "render the token into a hidden form field".
-async fn handler(req: Request<MaybeBufferedBody<Body>>) -> Result<Response<Body>, Infallible> {
+async fn handler(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let token = req
         .extensions()
         .get::<CsrfToken>()

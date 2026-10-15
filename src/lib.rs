@@ -121,7 +121,7 @@ pub use patterns::CsrfPattern;
 pub use patterns::{double_submit, hybrid, synchronizer};
 pub use regenerate::RegenerateToken;
 pub use service::CsrfService;
-pub use transport::{MaybeBufferedBody, TokenTransport};
+pub use transport::TokenTransport;
 pub use typestate::{Missing, Present};
 
 pub use double_submit::{DoubleSubmit, Hmac, Naive};

@@ -14,7 +14,7 @@ use http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full};
 use tower::{Service, ServiceExt};
-use tower_csrf_shield::{CsrfToken, MaybeBufferedBody};
+use tower_csrf_shield::CsrfToken;
 use tower_sessions::session::{Id, Record};
 use tower_sessions::session_store::{self, SessionStore};
 use tower_sessions_memory_store::MemoryStore;
@@ -24,7 +24,7 @@ pub type Body = Full<Bytes>;
 /// The innermost "application": replies `"<csrf token>\n<request body>"`, so
 /// tests can see both which token the layer exposed and that the request
 /// body arrived intact.
-pub async fn app(req: Request<MaybeBufferedBody<Body>>) -> Result<Response<Body>, Infallible> {
+pub async fn app(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let token = req
         .extensions()
         .get::<CsrfToken>()
